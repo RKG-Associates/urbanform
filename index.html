@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Urban Form Modeling</title>
+
+    <!-- MapLibre GL JS -->
+    <link href="https://unpkg.com/maplibre-gl@4.7.0/dist/maplibre-gl.css" rel="stylesheet">
+    <script src="https://unpkg.com/maplibre-gl@4.7.0/dist/maplibre-gl.js"></script>
+
+    <!-- PMTiles -->
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100vh;
+        }
+
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            max-width: 280px;
+            z-index: 1000;
+        }
+
+        @media (max-width: 640px) {
+            .control-panel {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+            }
+        }
+
+        .category-checkbox:checked + label .category-indicator {
+            opacity: 1;
+        }
+
+        .category-checkbox:not(:checked) + label .category-indicator {
+            opacity: 0.3;
+        }
+
+        .category-indicator {
+            transition: opacity 0.2s ease;
+        }
+
+        input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        label {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <div class="p-4">
+            <!-- Title -->
+            <!--<h1 class="text-lg font-bold text-gray-800 mb-4">Building Forms</h1> -->
+
+            <!-- Toggle Button (Mobile Only) -->
+            <button id="toggle-panel" class="md:hidden w-full mb-3 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors flex items-center justify-between">
+                <span>Map Information</span>
+                <span id="toggle-icon">▼</span>
+            </button>
+
+            <!-- Collapsible Section -->
+            <div id="category-section">
+                <!-- Category Toggles -->
+                <div class="mb-6">
+                    <h2 class="text-sm font-semibold text-gray-700 mb-3 hidden md:block">Building Typologies</h2>
+                    <div id="category-controls" class="space-y-2">
+                        <!-- Categories will be dynamically generated here -->
+                    </div>
+                </div>
+
+                <!-- About Section -->
+                <div class="bg-gray-100 p-3" style="border-radius: 8px;">
+                    <p class="text-xs text-gray-700 leading-relaxed mb-3">
+                        This map was built by <strong>RKG Associates</strong>, utilizing a proprietary spatial modeling technique to study the various building typologies and their connectivity across the City of Boston.
+                    </p><br>
+                    <div class="flex items-center gap-3">
+                        <a href="https://www.linkedin.com/company/rkgassociates/posts/?feedView=all" target="_blank" class="hover:opacity-80 transition-opacity">
+                            <img src="rkglogo_red.png" alt="RKG Associates Logo" style="height: 16px;">
+                        </a>
+                        <div class="border-l border-gray-400 h-8"></div>
+                        <p class="text-xs font-medium text-gray-600 italic leading-tight">
+                            Economic, Planning &<br>Real Estate Consultants
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Add PMTiles protocol
+        let protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        // Color palette for categories
+        const categoryColors = {
+            1: '#E63946',
+            2: '#F77F00',
+            3: '#FCBF49',
+            4: '#06A77D',
+            5: '#4361EE',
+            6: '#7209B7',
+            7: '#D90429',
+            8: '#2A9D8F'
+        };
+
+        // High-quality vector basemap style (no token required)
+        const basemapStyle = 'https://tiles.openfreemap.org/styles/positron';
+
+        // Initialize map centered on Boston (shifted 3 miles south, 1.5 miles west)
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: basemapStyle,
+            center: [-71.0806, 42.3166], // Boston coordinates, ~3 miles south, ~1.5 miles west
+            zoom: 12.5,
+            pitch: 50, // Tilt for 3D view
+            antialias: true
+        });
+
+        // Add navigation controls
+        map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+        // Store available categories found in data
+        let availableCategories = [];
+
+        // Create filter expression that combines all visible categories
+        const createFilter = () => {
+            const visibleCategories = [];
+            availableCategories.forEach(cat => {
+                const checkbox = document.getElementById(`category-${cat}`);
+                if (checkbox && checkbox.checked) {
+                    visibleCategories.push(cat);
+                }
+            });
+
+            if (visibleCategories.length === 0) {
+                return ['==', ['get', 'form_cat'], -1]; // Show nothing
+            }
+
+            return ['in', ['get', 'form_cat'], ['literal', visibleCategories]];
+        };
+
+        // Function to detect categories and create checkboxes
+        // For vector tiles, we'll query the rendered features to determine available categories
+        const initializeCategoryControls = () => {
+            // Query rendered features to find unique categories
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'blocks'
+            });
+
+            const categoriesSet = new Set();
+            features.forEach(feature => {
+                const category = feature.properties.form_cat;
+                if (category !== null && category !== undefined) {
+                    categoriesSet.add(category);
+                }
+            });
+
+            // Convert to sorted array
+            availableCategories = Array.from(categoriesSet).sort((a, b) => a - b);
+
+            // Generate checkboxes for available categories
+            const controlsContainer = document.getElementById('category-controls');
+            controlsContainer.innerHTML = '';
+
+            availableCategories.forEach(cat => {
+                const color = categoryColors[cat] || '#CCCCCC';
+                const checkboxHtml = `
+                    <div class="flex items-center">
+                        <input type="checkbox" id="category-${cat}" class="category-checkbox mr-2" checked>
+                        <label for="category-${cat}" class="flex items-center flex-1">
+                            <span class="category-indicator w-4 h-4 rounded mr-2" style="background-color: ${color};"></span>
+                            <span class="text-sm text-gray-700">Category ${cat}</span>
+                        </label>
+                    </div>
+                `;
+                controlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to checkboxes
+            availableCategories.forEach(cat => {
+                document.getElementById(`category-${cat}`).addEventListener('change', () => {
+                    map.setFilter('buildings-3d', createFilter());
+                });
+            });
+        };
+
+        // Load data and add layers when map loads
+        map.on('load', () => {
+            // Remove any 3D building layers from the basemap style
+            const layers = map.getStyle().layers;
+            layers.forEach(layer => {
+                if (layer.type === 'fill-extrusion') {
+                    map.removeLayer(layer.id);
+                }
+            });
+
+            // Add buildings source from local PMTiles file
+            map.addSource('buildings', {
+                type: 'vector',
+                url: 'pmtiles://bldgs.pmtiles'
+            });
+
+            // Add 3D buildings layer without filter initially
+            map.addLayer({
+                id: 'buildings-3d',
+                type: 'fill-extrusion',
+                source: 'buildings',
+                'source-layer': 'blocks',
+                paint: {
+                    'fill-extrusion-color': [
+                        'match',
+                        ['get', 'form_cat'],
+                        1, categoryColors[1],
+                        2, categoryColors[2],
+                        3, categoryColors[3],
+                        4, categoryColors[4],
+                        5, categoryColors[5],
+                        6, categoryColors[6],
+                        7, categoryColors[7],
+                        8, categoryColors[8],
+                        '#CCCCCC' // Default color for unknown categories
+                    ],
+                    'fill-extrusion-height': ['get', 'height'],
+                    'fill-extrusion-base': ['get', 'min_height'],
+                    'fill-extrusion-opacity': 0.8
+                }
+            });
+
+
+            // Wait for tiles to load before initializing category controls
+            map.on('idle', () => {
+                if (availableCategories.length === 0) {
+                    initializeCategoryControls();
+                    // Apply filter after controls are initialized
+                    map.setFilter('buildings-3d', createFilter());
+                }
+            });
+
+            // Add click interaction to show building properties
+            map.on('click', 'buildings-3d', (e) => {
+                if (e.features.length > 0) {
+                    const properties = e.features[0].properties;
+                    const category = properties.form_cat;
+                    const height = properties.height;
+
+                    new maplibregl.Popup()
+                        .setLngLat(e.lngLat)
+                        .setHTML(`
+                            <div class="p-2">
+                                <div class="font-semibold mb-1">Building Information</div>
+                                <div class="text-sm">
+                                    <div>Category: ${category}</div>
+                                    ${height ? `<div>Height: ${Math.round(height)} m</div>` : ''}
+                                </div>
+                            </div>
+                        `)
+                        .addTo(map);
+                }
+            });
+
+            // Change cursor on hover
+            map.on('mouseenter', 'buildings-3d', () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+
+            map.on('mouseleave', 'buildings-3d', () => {
+                map.getCanvas().style.cursor = '';
+            });
+        });
+
+        // Mobile collapse functionality
+        const toggleBtn = document.getElementById('toggle-panel');
+        const categorySection = document.getElementById('category-section');
+        const toggleIcon = document.getElementById('toggle-icon');
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                categorySection.classList.toggle('hidden');
+                toggleIcon.textContent = categorySection.classList.contains('hidden') ? '▼' : '▲';
+            });
+        }
+    </script>
+</body>
+</html>
