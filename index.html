@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Urban Form Modeling</title>
+
+    <!-- Mapbox GL JS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+
+    <!-- PMTiles -->
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100vh;
+        }
+
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            max-width: 280px;
+            z-index: 1000;
+        }
+
+        @media (max-width: 640px) {
+            .control-panel {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+            }
+        }
+
+        .category-checkbox:checked + label .category-indicator {
+            opacity: 1;
+        }
+
+        .category-checkbox:not(:checked) + label .category-indicator {
+            opacity: 0.3;
+        }
+
+        .category-indicator {
+            transition: opacity 0.2s ease;
+        }
+
+        input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        label {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <div class="p-4">
+            <!-- Title -->
+            <!--<h1 class="text-lg font-bold text-gray-800 mb-4">Building Forms</h1> -->
+
+            <!-- Category Toggles -->
+            <div class="mb-6">
+                <h2 class="text-sm font-semibold text-gray-700 mb-3">Building Categories</h2>
+                <div id="category-controls" class="space-y-2">
+                    <!-- Categories will be dynamically generated here -->
+                </div>
+            </div>
+
+            <!-- Basemap Switcher -->
+            <div>
+                <h2 class="text-sm font-semibold text-gray-700 mb-3">Basemap Style</h2>
+                <div class="flex gap-2">
+                    <button id="basemap-standard" class="flex-1 px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors">
+                        Standard
+                    </button>
+                    <button id="basemap-light" class="flex-1 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-200 rounded hover:bg-gray-300 transition-colors">
+                        Light
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Mapbox access token
+        mapboxgl.accessToken = 'pk.eyJ1IjoiYmdyaWRsZXlya2ciLCJhIjoiY21mNzlnMnZnMGwxOTJxb21wdm5sdjhmcSJ9.XIm2i0j6xPf1Ay8M8F3r2A';
+
+        // Add PMTiles protocol
+        let protocol = new pmtiles.Protocol();
+        mapboxgl.addProtocol("pmtiles", protocol.tile);
+
+        // Color palette for categories
+        const categoryColors = {
+            1: '#E63946',
+            2: '#F77F00',
+            3: '#FCBF49',
+            4: '#06A77D',
+            5: '#4361EE',
+            6: '#7209B7',
+            7: '#D90429',
+            8: '#2A9D8F'
+        };
+
+        // Basemap styles
+        const basemapStyles = {
+            standard: 'mapbox://styles/bgridleyrkg/cmgwo7cus009n01qodliw1m9e',
+            light: 'mapbox://styles/bgridleyrkg/cmgwo7poa008j01s66wrka3ti'
+        };
+
+        let currentBasemap = 'standard';
+
+        // Initialize map centered on Boston
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: basemapStyles.standard,
+            center: [-71.0589, 42.3601], // Boston coordinates
+            zoom: 13,
+            pitch: 45, // Tilt for 3D view
+            antialias: true
+        });
+
+        // Add navigation controls
+        map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+
+        // Store available categories found in data
+        let availableCategories = [];
+
+        // Create filter expression that combines all visible categories
+        const createFilter = () => {
+            const visibleCategories = [];
+            availableCategories.forEach(cat => {
+                const checkbox = document.getElementById(`category-${cat}`);
+                if (checkbox && checkbox.checked) {
+                    visibleCategories.push(cat);
+                }
+            });
+
+            if (visibleCategories.length === 0) {
+                return ['==', ['get', 'form_cat'], -1]; // Show nothing
+            }
+
+            return ['in', ['get', 'form_cat'], ['literal', visibleCategories]];
+        };
+
+        // Function to detect categories and create checkboxes
+        // For vector tiles, we'll query the rendered features to determine available categories
+        const initializeCategoryControls = () => {
+            // Query rendered features to find unique categories
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'blocks'
+            });
+
+            const categoriesSet = new Set();
+            features.forEach(feature => {
+                const category = feature.properties.form_cat;
+                if (category !== null && category !== undefined) {
+                    categoriesSet.add(category);
+                }
+            });
+
+            // Convert to sorted array
+            availableCategories = Array.from(categoriesSet).sort((a, b) => a - b);
+
+            // Generate checkboxes for available categories
+            const controlsContainer = document.getElementById('category-controls');
+            controlsContainer.innerHTML = '';
+
+            availableCategories.forEach(cat => {
+                const color = categoryColors[cat] || '#CCCCCC';
+                const checkboxHtml = `
+                    <div class="flex items-center">
+                        <input type="checkbox" id="category-${cat}" class="category-checkbox mr-2" checked>
+                        <label for="category-${cat}" class="flex items-center flex-1">
+                            <span class="category-indicator w-4 h-4 rounded mr-2" style="background-color: ${color};"></span>
+                            <span class="text-sm text-gray-700">Category ${cat}</span>
+                        </label>
+                    </div>
+                `;
+                controlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to checkboxes
+            availableCategories.forEach(cat => {
+                document.getElementById(`category-${cat}`).addEventListener('change', () => {
+                    map.setFilter('buildings-3d', createFilter());
+                });
+            });
+        };
+
+        // Load data and add layers when map loads
+        map.on('load', () => {
+            // Add buildings source from local PMTiles file
+            map.addSource('buildings', {
+                type: 'vector',
+                url: 'pmtiles://bldgs.pmtiles'
+            });
+
+            // Add 3D buildings layer without filter initially
+            map.addLayer({
+                id: 'buildings-3d',
+                type: 'fill-extrusion',
+                source: 'buildings',
+                'source-layer': 'blocks',
+                paint: {
+                    'fill-extrusion-color': [
+                        'match',
+                        ['get', 'form_cat'],
+                        1, categoryColors[1],
+                        2, categoryColors[2],
+                        3, categoryColors[3],
+                        4, categoryColors[4],
+                        5, categoryColors[5],
+                        6, categoryColors[6],
+                        7, categoryColors[7],
+                        8, categoryColors[8],
+                        '#CCCCCC' // Default color for unknown categories
+                    ],
+                    'fill-extrusion-height': ['get', 'height'],
+                    'fill-extrusion-base': ['get', 'min_height'],
+                    'fill-extrusion-opacity': 0.8
+                }
+            });
+
+
+            // Wait for tiles to load before initializing category controls
+            map.on('idle', () => {
+                if (availableCategories.length === 0) {
+                    initializeCategoryControls();
+                    // Apply filter after controls are initialized
+                    map.setFilter('buildings-3d', createFilter());
+                }
+            });
+
+            // Add click interaction to show building properties
+            map.on('click', 'buildings-3d', (e) => {
+                if (e.features.length > 0) {
+                    const properties = e.features[0].properties;
+                    const category = properties.form_cat;
+                    const height = properties.height;
+
+                    new mapboxgl.Popup()
+                        .setLngLat(e.lngLat)
+                        .setHTML(`
+                            <div class="p-2">
+                                <div class="font-semibold mb-1">Building Information</div>
+                                <div class="text-sm">
+                                    <div>Category: ${category}</div>
+                                    ${height ? `<div>Height: ${Math.round(height)} m</div>` : ''}
+                                </div>
+                            </div>
+                        `)
+                        .addTo(map);
+                }
+            });
+
+            // Change cursor on hover
+            map.on('mouseenter', 'buildings-3d', () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+
+            map.on('mouseleave', 'buildings-3d', () => {
+                map.getCanvas().style.cursor = '';
+            });
+        });
+
+        // Basemap switcher functionality
+        const updateBasemapButtons = (active) => {
+            const standardBtn = document.getElementById('basemap-standard');
+            const lightBtn = document.getElementById('basemap-light');
+
+            if (active === 'standard') {
+                standardBtn.className = 'flex-1 px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors';
+                lightBtn.className = 'flex-1 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-200 rounded hover:bg-gray-300 transition-colors';
+            } else {
+                lightBtn.className = 'flex-1 px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors';
+                standardBtn.className = 'flex-1 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-200 rounded hover:bg-gray-300 transition-colors';
+            }
+        };
+
+        // Function to add building layer
+        const addBuildingLayer = () => {
+            map.addLayer({
+                id: 'buildings-3d',
+                type: 'fill-extrusion',
+                source: 'buildings',
+                'source-layer': 'blocks',
+                minzoom: 0,
+                maxzoom: 24,
+                paint: {
+                    'fill-extrusion-color': [
+                        'match',
+                        ['get', 'form_cat'],
+                        1, categoryColors[1],
+                        2, categoryColors[2],
+                        3, categoryColors[3],
+                        4, categoryColors[4],
+                        5, categoryColors[5],
+                        6, categoryColors[6],
+                        7, categoryColors[7],
+                        8, categoryColors[8],
+                        '#CCCCCC'
+                    ],
+                    'fill-extrusion-height': ['get', 'height'],
+                    'fill-extrusion-base': ['get', 'min_height'],
+                    'fill-extrusion-opacity': 0.8
+                }
+            });
+        };
+
+        document.getElementById('basemap-standard').addEventListener('click', () => {
+            if (currentBasemap !== 'standard') {
+                map.setStyle(basemapStyles.standard);
+                currentBasemap = 'standard';
+                updateBasemapButtons('standard');
+
+                // Re-add layers after style changes
+                map.once('style.load', () => {
+                    map.addSource('buildings', {
+                        type: 'vector',
+                        url: 'pmtiles://bldgs.pmtiles'
+                    });
+
+                    addBuildingLayer();
+                });
+            }
+        });
+
+        document.getElementById('basemap-light').addEventListener('click', () => {
+            if (currentBasemap !== 'light') {
+                map.setStyle(basemapStyles.light);
+                currentBasemap = 'light';
+                updateBasemapButtons('light');
+
+                // Re-add layers after style changes
+                map.once('style.load', () => {
+                    map.addSource('buildings', {
+                        type: 'vector',
+                        url: 'pmtiles://bldgs.pmtiles'
+                    });
+
+                    addBuildingLayer();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
