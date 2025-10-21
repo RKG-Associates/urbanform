@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RKG | Urban Form Modeling</title>
+
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@^5.9.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@^5.9.0/dist/maplibre-gl.css" rel="stylesheet">
+
+
+    <!-- PMTiles -->
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100vh;
+        }
+
+        #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* Left controls container */
+        .left-controls-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            max-width: 280px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        .control-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            width: 100%;
+        }
+
+        @media (max-width: 640px) {
+            .left-controls-container {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+                max-height: calc(100vh - 20px);
+            }
+
+            .control-panel {
+                max-height: none;
+            }
+        }
+
+        .category-checkbox:checked + label .category-indicator {
+            opacity: 1;
+        }
+
+        .category-checkbox:not(:checked) + label .category-indicator {
+            opacity: 0.3;
+        }
+
+        .category-indicator {
+            transition: opacity 0.2s ease;
+        }
+
+        input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        label {
+            cursor: pointer;
+        }
+
+        @media (max-width: 640px) {
+            /* Adjust navigation controls on mobile to prevent cutoff */
+            .maplibregl-ctrl-bottom-right {
+                bottom: 10px !important;
+                right: 10px !important;
+                margin-bottom: env(safe-area-inset-bottom, 10px) !important;
+                margin-right: env(safe-area-inset-right, 0) !important;
+            }
+
+            /* Ensure map viewport is fully visible on mobile */
+            #map {
+                height: 100vh;
+                height: 100dvh; /* Use dynamic viewport height for mobile */
+            }
+        }
+
+        /* Custom draw controls - integrated with MapLibre controls */
+        .maplibregl-ctrl-group .draw-control-button {
+            background: #fff;
+            border: none;
+            width: 29px;
+            height: 29px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            border-top: 1px solid #ddd;
+            padding: 0;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button:hover {
+            background: #f2f2f2;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.active {
+            background: #4361EE;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.active svg {
+            stroke: white;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button svg {
+            width: 18px;
+            height: 18px;
+            stroke: #333;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.clear-button {
+            display: none;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.clear-button.visible {
+            display: flex;
+        }
+
+        /* Custom popup styling to match control panel */
+        .maplibregl-popup-content {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            padding: 8px 12px;
+        }
+
+        .maplibregl-popup-close-button {
+            display: none;
+        }
+
+        .maplibregl-popup-tip {
+            border-top-color: rgba(255, 255, 255, 0.95);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <canvas id="drawing-canvas"></canvas>
+
+    <!-- Left Controls Container -->
+    <div class="left-controls-container">
+        <!-- Control Panel -->
+        <div class="control-panel">
+        <div class="p-4">
+            <!-- Title -->
+            <!--<h1 class="text-lg font-bold text-gray-800 mb-4">Building Forms</h1> -->
+
+            <!-- Toggle Button (Mobile Only) -->
+            <button id="toggle-panel" class="md:hidden w-full mb-3 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors flex items-center justify-between">
+                <span>Map Information</span>
+                <span id="toggle-icon">▼</span>
+            </button>
+
+            <!-- Collapsible Section -->
+            <div id="category-section" class="hidden md:block">
+                <!-- Category Toggles -->
+                <div class="mb-6">
+                    <h2 class="text-sm font-semibold text-gray-700 mb-3">Building Typologies</h2>
+                    <div id="category-controls" class="space-y-2">
+                        <!-- Categories will be dynamically generated here -->
+                    </div>
+                </div>
+
+                <!-- Building Use Filter -->
+                <div class="mb-6">
+                    <button id="building-use-toggle" class="w-full flex items-center justify-between px-3 py-2 text-sm font-semibold text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors">
+                        <span>Building Use</span>
+                        <span id="use-toggle-icon" class="text-xs">▼</span>
+                    </button>
+                    <div id="building-use-controls" class="space-y-2 mt-2 hidden">
+                        <!-- Building use checkboxes will be dynamically generated here -->
+                    </div>
+                </div>
+
+                <!-- About Section -->
+                <div class="bg-gray-100 p-3" style="border-radius: 8px;">
+                    <p class="text-xs text-gray-700 leading-relaxed mb-3">
+                        This map was built by <strong>RKG Associates</strong>, utilizing a proprietary clustering technique to study the existing built form across any given area. It groups any collection of buildings based on their physical properties and relative positioning.
+                    </p><br>
+                    <div class="flex items-center gap-3">
+                        <a href="https://www.linkedin.com/company/rkgassociates/posts/?feedView=all" target="_blank" class="hover:opacity-80 transition-opacity">
+                            <img src="rkglogo_red.png" alt="RKG Associates Logo" style="height: 16px;">
+                        </a>
+                        <div class="border-l border-gray-400 h-8"></div>
+                        <p class="text-xs font-medium text-gray-600 italic leading-tight">
+                            Economic, Planning &<br>Real Estate Consultants
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script>
+        // Add PMTiles protocol
+        let protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        // Color palette for categories
+        const categoryColors = {
+            1: '#E63946',
+            2: '#F77F00',
+            3: '#FCBF49',
+            4: '#06A77D',
+            5: '#4361EE',
+            6: '#7209B7',
+            7: '#D90429',
+            8: '#2A9D8F'
+        };
+
+        // High-quality vector basemap style (no token required)
+        const basemapStyle = 'https://tiles.openfreemap.org/styles/positron';
+
+        // Initialize map centered on Boston (shifted 3 miles south, 1.5 miles west)
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: basemapStyle,
+            center: [-71.0806, 42.3166], // Boston coordinates, ~3 miles south, ~1.5 miles west
+            zoom: 12.5,
+            pitch: 50, // Tilt for 3D view
+            maxPitch: 85, // Allow steeper viewing angles for terrain
+            antialias: true
+        });
+
+        // Add navigation controls
+        map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+        // Custom freehand drawing implementation (works on desktop and mobile)
+        let drawMode = false;
+        let isActivelyDrawing = false;
+        let drawingCoords = [];
+        let drawnPolygon = null;
+        let areaFilterActive = false;
+
+        // Canvas-based drawing for instant visual feedback
+        const canvas = document.getElementById('drawing-canvas');
+        const ctx = canvas.getContext('2d');
+        let canvasPixelCoords = [];
+
+        // Setup canvas size
+        const resizeCanvas = () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        };
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Add custom draw buttons to the navigation control group
+        let drawButton, clearButton;
+
+        // Wait for navigation controls to be added to DOM
+        setTimeout(() => {
+            const navControl = document.querySelector('.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group');
+
+            if (navControl) {
+                // Create draw button
+                drawButton = document.createElement('button');
+                drawButton.className = 'draw-control-button';
+                drawButton.title = 'Draw area to filter buildings';
+                drawButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                `;
+
+                // Create clear button
+                clearButton = document.createElement('button');
+                clearButton.className = 'draw-control-button clear-button';
+                clearButton.title = 'Clear drawn area';
+                clearButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                `;
+
+                // Add buttons to navigation control group
+                navControl.appendChild(drawButton);
+                navControl.appendChild(clearButton);
+
+                // Toggle draw mode
+                drawButton.addEventListener('click', () => {
+                    drawMode = !drawMode;
+                    if (drawMode) {
+                        drawButton.classList.add('active');
+                        map.getCanvas().style.cursor = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%234361EE\' stroke-width=\'2\'><path d=\'M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z\'/></svg>") 0 24, crosshair';
+                    } else {
+                        drawButton.classList.remove('active');
+                        map.getCanvas().style.cursor = '';
+                    }
+                });
+
+                // Clear drawn area
+                clearButton.addEventListener('click', () => {
+                    clearDrawing();
+                });
+            }
+        }, 100);
+
+        const clearDrawing = () => {
+            if (map.getSource('drawn-polygon')) {
+                if (map.getLayer('drawn-polygon-outline')) {
+                    map.removeLayer('drawn-polygon-outline');
+                }
+                map.removeSource('drawn-polygon');
+            }
+            if (map.getSource('drawing-line')) {
+                map.removeLayer('drawing-line');
+                map.removeSource('drawing-line');
+            }
+            drawnPolygon = null;
+            filteredBuildingIds.clear();
+            areaFilterActive = false;
+            drawingCoords = [];
+            canvasPixelCoords = [];
+            isActivelyDrawing = false;
+            drawMode = false;
+            if (drawButton) drawButton.classList.remove('active');
+            if (clearButton) clearButton.classList.remove('visible');
+            map.getCanvas().style.cursor = '';
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            applyFilter();
+        };
+
+        // Point-in-polygon check using ray casting algorithm
+        const isPointInPolygon = (point, polygonCoords) => {
+            const x = point[0];
+            const y = point[1];
+            let inside = false;
+
+            for (let i = 0, j = polygonCoords.length - 1; i < polygonCoords.length; j = i++) {
+                const xi = polygonCoords[i][0];
+                const yi = polygonCoords[i][1];
+                const xj = polygonCoords[j][0];
+                const yj = polygonCoords[j][1];
+
+                const intersect = ((yi > y) !== (yj > y)) &&
+                    (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+
+            return inside;
+        };
+
+        // Query buildings within the drawn polygon (optimized)
+        const queryBuildingsInPolygon = () => {
+            if (!drawnPolygon) return;
+
+            filteredBuildingIds.clear();
+
+            // Get bounding box of drawn polygon for initial filtering
+            const coords = drawnPolygon.coordinates[0];
+            let minLng = Infinity, maxLng = -Infinity;
+            let minLat = Infinity, maxLat = -Infinity;
+
+            for (let i = 0; i < coords.length; i++) {
+                const lng = coords[i][0];
+                const lat = coords[i][1];
+                if (lng < minLng) minLng = lng;
+                if (lng > maxLng) maxLng = lng;
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+            }
+
+            // Pre-calculate screen bbox for faster querying
+            const bbox = [
+                map.project([minLng, minLat]),
+                map.project([maxLng, maxLat])
+            ];
+
+            // Query source features within the visible area only (much faster than querying everything)
+            // querySourceFeatures returns ALL features from loaded tiles regardless of filters
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'blocks'
+            });
+
+            // Process features efficiently with early bbox rejection
+            const polygonCoords = drawnPolygon.coordinates[0];
+
+            for (let i = 0; i < features.length; i++) {
+                const feature = features[i];
+                if (feature.geometry && feature.geometry.type === 'Polygon') {
+                    const coords = feature.geometry.coordinates[0];
+                    const len = coords.length;
+
+                    // Calculate centroid inline
+                    let centroidLng = 0;
+                    let centroidLat = 0;
+                    for (let j = 0; j < len; j++) {
+                        centroidLng += coords[j][0];
+                        centroidLat += coords[j][1];
+                    }
+                    centroidLng /= len;
+                    centroidLat /= len;
+
+                    // Quick bbox check before expensive point-in-polygon test
+                    if (centroidLng >= minLng && centroidLng <= maxLng &&
+                        centroidLat >= minLat && centroidLat <= maxLat) {
+
+                        // Only do expensive point-in-polygon check if inside bbox
+                        if (isPointInPolygon([centroidLng, centroidLat], polygonCoords)) {
+                            if (feature.id !== undefined) {
+                                filteredBuildingIds.add(feature.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            console.log(`Found ${filteredBuildingIds.size} buildings within drawn area`);
+        };
+
+        const finishDrawing = () => {
+            if (drawingCoords.length < 3) {
+                clearDrawing();
+                return;
+            }
+
+            // Close the polygon
+            drawingCoords.push(drawingCoords[0]);
+
+            // Create polygon (store it but don't display it)
+            drawnPolygon = {
+                type: 'Polygon',
+                coordinates: [drawingCoords]
+            };
+
+            // Clear the canvas since we're done drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvasPixelCoords = [];
+
+            isActivelyDrawing = false;
+            drawMode = false;
+            areaFilterActive = true;
+            if (drawButton) drawButton.classList.remove('active');
+            if (clearButton) clearButton.classList.add('visible');
+            map.getCanvas().style.cursor = '';
+
+            // Query buildings within polygon and apply filter
+            queryBuildingsInPolygon();
+            applyFilter();
+        };
+
+        // Mouse/Touch handlers
+        const startDrawing = (e) => {
+            if (!drawMode) return;
+            isActivelyDrawing = true;
+
+            const point = e.point || map.project(e.lngLat);
+            const lngLat = e.lngLat;
+
+            drawingCoords = [[lngLat.lng, lngLat.lat]];
+            canvasPixelCoords = [[point.x, point.y]];
+            lastPoint = [lngLat.lng, lngLat.lat];
+            map.dragPan.disable();
+
+            // Clear canvas for new drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        };
+
+        // Drawing state
+        let lastPoint = null;
+        const MIN_DISTANCE_PIXELS = 2; // Very small distance for smooth drawing
+
+        const continueDrawing = (e) => {
+            if (!drawMode || !isActivelyDrawing) return;
+
+            const point = e.point || map.project(e.lngLat);
+            const lngLat = e.lngLat;
+
+            // Calculate pixel distance from last point
+            const lastPixelPoint = canvasPixelCoords[canvasPixelCoords.length - 1];
+            const dx = point.x - lastPixelPoint[0];
+            const dy = point.y - lastPixelPoint[1];
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Skip if too close to last point
+            if (distance < MIN_DISTANCE_PIXELS) {
+                return;
+            }
+
+            // Add to coordinate arrays
+            drawingCoords.push([lngLat.lng, lngLat.lat]);
+            canvasPixelCoords.push([point.x, point.y]);
+            lastPoint = [lngLat.lng, lngLat.lat];
+
+            // Draw directly on canvas - INSTANT feedback, no MapLibre overhead
+            ctx.strokeStyle = '#4361EE';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(lastPixelPoint[0], lastPixelPoint[1]);
+            ctx.lineTo(point.x, point.y);
+            ctx.stroke();
+        };
+
+        const stopDrawing = () => {
+            if (!drawMode || !isActivelyDrawing) return;
+            map.dragPan.enable();
+            lastPoint = null; // Reset for next drawing
+            finishDrawing();
+        };
+
+        // Desktop mouse events
+        map.on('mousedown', (e) => {
+            startDrawing(e);
+        });
+
+        map.on('mousemove', (e) => {
+            continueDrawing(e);
+        });
+
+        map.on('mouseup', () => {
+            stopDrawing();
+        });
+
+        // Mobile touch events
+        map.on('touchstart', (e) => {
+            if (e.points.length === 1) {
+                startDrawing(e);
+            }
+        });
+
+        map.on('touchmove', (e) => {
+            if (e.points.length === 1) {
+                continueDrawing(e);
+            }
+        });
+
+        map.on('touchend', () => {
+            stopDrawing();
+        });
+
+        // Store available categories found in data
+        let availableCategories = [];
+
+        // Building use types
+        const buildingUseTypes = [
+            'Residential',
+            'Mixed Use',
+            'Commercial',
+            'Condominium',
+            'Institutional',
+            'Government',
+            'Garage',
+            'Other'
+        ];
+
+        // Store selected building uses (all selected by default)
+        let selectedBuildingUses = new Set(buildingUseTypes);
+
+        // Store filtered building features
+        let filteredBuildingIds = new Set();
+
+        // Create filter expression that combines category filter, building use filter, and area filter
+        const createFilter = () => {
+            const visibleCategories = [];
+            availableCategories.forEach(cat => {
+                const checkbox = document.getElementById(`category-${cat}`);
+                if (checkbox && checkbox.checked) {
+                    visibleCategories.push(cat);
+                }
+            });
+
+            // Category filter
+            let categoryFilter;
+            if (visibleCategories.length === 0) {
+                categoryFilter = ['==', ['get', 'form_cat'], -1]; // Show nothing
+            } else {
+                categoryFilter = ['in', ['get', 'form_cat'], ['literal', visibleCategories]];
+            }
+
+            // Building use filter
+            let buildingUseFilter;
+            const selectedUsesArray = Array.from(selectedBuildingUses);
+            if (selectedUsesArray.length === 0) {
+                buildingUseFilter = ['==', ['get', 'Bldg_Use'], '']; // Show nothing
+            } else {
+                buildingUseFilter = ['in', ['get', 'Bldg_Use'], ['literal', selectedUsesArray]];
+            }
+
+            // Combine filters
+            let combinedFilter = ['all', categoryFilter, buildingUseFilter];
+
+            // If area filter is active, add spatial filter
+            if (areaFilterActive && drawnPolygon && filteredBuildingIds.size > 0) {
+                const buildingIdsArray = Array.from(filteredBuildingIds);
+                combinedFilter = ['all',
+                    categoryFilter,
+                    buildingUseFilter,
+                    ['in', ['id'], ['literal', buildingIdsArray]]
+                ];
+            }
+
+            return combinedFilter;
+        };
+
+        // Function to apply the combined filter
+        const applyFilter = () => {
+            if (map.getLayer('buildings-3d')) {
+                map.setFilter('buildings-3d', createFilter());
+            }
+        };
+
+        // Function to detect categories and create checkboxes
+        // For vector tiles, we'll query the rendered features to determine available categories
+        const initializeCategoryControls = () => {
+            // Query rendered features to find unique categories
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'blocks'
+            });
+
+            const categoriesSet = new Set();
+            features.forEach(feature => {
+                const category = feature.properties.form_cat;
+                if (category !== null && category !== undefined) {
+                    categoriesSet.add(category);
+                }
+            });
+
+            // Convert to sorted array
+            availableCategories = Array.from(categoriesSet).sort((a, b) => a - b);
+
+            // Generate checkboxes for available categories
+            const controlsContainer = document.getElementById('category-controls');
+            controlsContainer.innerHTML = '';
+
+            availableCategories.forEach(cat => {
+                const color = categoryColors[cat] || '#CCCCCC';
+                const checkboxHtml = `
+                    <div class="flex items-center">
+                        <input type="checkbox" id="category-${cat}" class="category-checkbox mr-2" checked>
+                        <label for="category-${cat}" class="flex items-center flex-1">
+                            <span class="category-indicator w-4 h-4 rounded mr-2" style="background-color: ${color};"></span>
+                            <span class="text-sm text-gray-700">Category ${cat}</span>
+                        </label>
+                    </div>
+                `;
+                controlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to checkboxes
+            availableCategories.forEach(cat => {
+                document.getElementById(`category-${cat}`).addEventListener('change', () => {
+                    applyFilter();
+                });
+            });
+
+            // Initialize building use controls
+            initializeBuildingUseControls();
+        };
+
+        // Function to create building use checkboxes
+        const initializeBuildingUseControls = () => {
+            const useControlsContainer = document.getElementById('building-use-controls');
+            useControlsContainer.innerHTML = '';
+
+            buildingUseTypes.forEach(useType => {
+                const checkboxHtml = `
+                    <div class="flex items-center">
+                        <input type="checkbox" id="use-${useType.replace(/\s+/g, '-')}" class="use-checkbox mr-2" checked>
+                        <label for="use-${useType.replace(/\s+/g, '-')}" class="flex items-center flex-1">
+                            <span class="text-sm text-gray-700">${useType}</span>
+                        </label>
+                    </div>
+                `;
+                useControlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to building use checkboxes
+            buildingUseTypes.forEach(useType => {
+                const checkbox = document.getElementById(`use-${useType.replace(/\s+/g, '-')}`);
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedBuildingUses.add(useType);
+                    } else {
+                        selectedBuildingUses.delete(useType);
+                    }
+                    applyFilter();
+                });
+            });
+
+            // Add toggle functionality for building use dropdown
+            const toggleButton = document.getElementById('building-use-toggle');
+            const toggleIcon = document.getElementById('use-toggle-icon');
+
+            if (toggleButton) {
+                toggleButton.addEventListener('click', () => {
+                    useControlsContainer.classList.toggle('hidden');
+                    toggleIcon.textContent = useControlsContainer.classList.contains('hidden') ? '▼' : '▲';
+                });
+            }
+        };
+
+        // Load data and add layers when map loads
+        map.on('load', () => {
+            // Remove any 3D building layers from the basemap style
+            const layers = map.getStyle().layers;
+            layers.forEach(layer => {
+                if (layer.type === 'fill-extrusion') {
+                    map.removeLayer(layer.id);
+                }
+            });
+
+            // Add buildings source from local PMTiles file
+            map.addSource('buildings', {
+                type: 'vector',
+                url: 'pmtiles://bldgs.pmtiles'
+            });
+
+            // Add 3D buildings layer without filter initially
+            map.addLayer({
+                id: 'buildings-3d',
+                type: 'fill-extrusion',
+                source: 'buildings',
+                'source-layer': 'blocks',
+                paint: {
+                    'fill-extrusion-color': [
+                        'match',
+                        ['get', 'form_cat'],
+                        1, categoryColors[1],
+                        2, categoryColors[2],
+                        3, categoryColors[3],
+                        4, categoryColors[4],
+                        5, categoryColors[5],
+                        6, categoryColors[6],
+                        7, categoryColors[7],
+                        8, categoryColors[8],
+                        '#CCCCCC' // Default color for unknown categories
+                    ],
+                    'fill-extrusion-height': ['get', 'height'],
+                    'fill-extrusion-base': ['get', 'min_height'],
+                    'fill-extrusion-opacity': 0.8
+                }
+            });
+
+
+            // Wait for tiles to load before initializing category controls
+            map.on('idle', () => {
+                if (availableCategories.length === 0) {
+                    initializeCategoryControls();
+                    // Apply filter after controls are initialized
+                    map.setFilter('buildings-3d', createFilter());
+                }
+            });
+
+            // Add click interaction to show building properties (disabled during draw mode)
+            map.on('click', 'buildings-3d', (e) => {
+                // Don't show popup if in draw mode
+                if (drawMode || isActivelyDrawing) return;
+
+                if (e.features.length > 0) {
+                    const properties = e.features[0].properties;
+                    const category = properties.form_cat;
+                    const height = properties.height;
+
+                    new maplibregl.Popup({ closeButton: false })
+                        .setLngLat(e.lngLat)
+                        .setHTML(`
+                            <div style="margin: 0;">
+                                <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px; color: #374151;">Building Information</div>
+                                <div style="font-size: 12px; color: #6B7280;">
+                                    <div>Category: ${category}</div>
+                                    ${height ? `<div>Height: ${Math.round(height)} m</div>` : ''}
+                                </div>
+                            </div>
+                        `)
+                        .addTo(map);
+                }
+            });
+
+            // Change cursor on hover (disabled during draw mode)
+            map.on('mouseenter', 'buildings-3d', () => {
+                if (!drawMode && !isActivelyDrawing) {
+                    map.getCanvas().style.cursor = 'pointer';
+                }
+            });
+
+            map.on('mouseleave', 'buildings-3d', () => {
+                if (!drawMode && !isActivelyDrawing) {
+                    map.getCanvas().style.cursor = '';
+                }
+            });
+        });
+
+        // No positioning logic needed - geocoder is in the container with flexbox
+
+        // Mobile collapse functionality
+        const toggleBtn = document.getElementById('toggle-panel');
+        const categorySection = document.getElementById('category-section');
+        const toggleIcon = document.getElementById('toggle-icon');
+
+        // Set initial icon state based on mobile/desktop
+        if (toggleIcon && window.innerWidth <= 640) {
+            toggleIcon.textContent = categorySection.classList.contains('hidden') ? '▼' : '▲';
+        }
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                categorySection.classList.toggle('hidden');
+                toggleIcon.textContent = categorySection.classList.contains('hidden') ? '▼' : '▲';
+            });
+        }
+    </script>
+</body>
+</html>
