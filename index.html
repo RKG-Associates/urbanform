@@ -97,6 +97,35 @@
             cursor: pointer;
         }
 
+        /* Exclusive selection button styles */
+        .exclusive-select-btn {
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background-color: #4361EE;
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            border: none;
+            margin-left: auto;
+        }
+
+        .exclusive-select-btn:hover {
+            background-color: #3451d4;
+        }
+
+        .filter-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-item:hover .exclusive-select-btn {
+            opacity: 1;
+        }
+
         @media (max-width: 640px) {
             /* Adjust navigation controls on mobile to prevent cutoff */
             .maplibregl-ctrl-bottom-right {
@@ -673,12 +702,13 @@
             availableCategories.forEach(cat => {
                 const color = categoryColors[cat] || '#CCCCCC';
                 const checkboxHtml = `
-                    <div class="flex items-center">
+                    <div class="filter-item">
                         <input type="checkbox" id="category-${cat}" class="category-checkbox mr-2" checked>
                         <label for="category-${cat}" class="flex items-center flex-1">
                             <span class="category-indicator w-4 h-4 rounded mr-2" style="background-color: ${color};"></span>
                             <span class="text-sm text-gray-700">Category ${cat}</span>
                         </label>
+                        <button class="exclusive-select-btn" data-category="${cat}" title="Select only this category">ONLY</button>
                     </div>
                 `;
                 controlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
@@ -686,7 +716,26 @@
 
             // Add event listeners to checkboxes
             availableCategories.forEach(cat => {
-                document.getElementById(`category-${cat}`).addEventListener('change', () => {
+                const checkbox = document.getElementById(`category-${cat}`);
+
+                // Handle checkbox changes
+                checkbox.addEventListener('change', () => {
+                    applyFilter();
+                });
+            });
+
+            // Add event listeners to exclusive selection buttons
+            const exclusiveButtons = controlsContainer.querySelectorAll('.exclusive-select-btn');
+            exclusiveButtons.forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const category = parseInt(button.dataset.category);
+
+                    // Uncheck all categories except this one
+                    availableCategories.forEach(cat => {
+                        const checkbox = document.getElementById(`category-${cat}`);
+                        checkbox.checked = (cat === category);
+                    });
                     applyFilter();
                 });
             });
@@ -702,11 +751,12 @@
 
             buildingUseTypes.forEach(useType => {
                 const checkboxHtml = `
-                    <div class="flex items-center">
+                    <div class="filter-item">
                         <input type="checkbox" id="use-${useType.replace(/\s+/g, '-')}" class="use-checkbox mr-2" checked>
                         <label for="use-${useType.replace(/\s+/g, '-')}" class="flex items-center flex-1">
                             <span class="text-sm text-gray-700">${useType}</span>
                         </label>
+                        <button class="exclusive-select-btn" data-use-type="${useType}" title="Select only ${useType}">ONLY</button>
                     </div>
                 `;
                 useControlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
@@ -715,12 +765,34 @@
             // Add event listeners to building use checkboxes
             buildingUseTypes.forEach(useType => {
                 const checkbox = document.getElementById(`use-${useType.replace(/\s+/g, '-')}`);
+
+                // Handle checkbox changes
                 checkbox.addEventListener('change', (e) => {
                     if (e.target.checked) {
                         selectedBuildingUses.add(useType);
                     } else {
                         selectedBuildingUses.delete(useType);
                     }
+                    applyFilter();
+                });
+            });
+
+            // Add event listeners to exclusive selection buttons
+            const useExclusiveButtons = useControlsContainer.querySelectorAll('.exclusive-select-btn');
+            useExclusiveButtons.forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const useType = button.dataset.useType;
+
+                    // Clear all selections and select only this one
+                    selectedBuildingUses.clear();
+                    selectedBuildingUses.add(useType);
+
+                    // Update all checkboxes
+                    buildingUseTypes.forEach(otherUseType => {
+                        const checkbox = document.getElementById(`use-${otherUseType.replace(/\s+/g, '-')}`);
+                        checkbox.checked = (otherUseType === useType);
+                    });
                     applyFilter();
                 });
             });
@@ -759,10 +831,10 @@
                 }
             });
 
-            // Add background buildings source from local PMTiles file
+            // Add background buildings source from GitHub Releases
             map.addSource('background-buildings', {
                 type: 'vector',
-                url: 'pmtiles://backgroundbldgs.pmtiles'
+                url: 'pmtiles://https://github.com/RKG-Associates/urbanform/releases/download/v1.0/backgroundbldgs.pmtiles'
             });
 
             // Add background buildings layer (rendered first, behind main buildings)
