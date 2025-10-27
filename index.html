@@ -1,0 +1,1537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RKG | Urban Form Explorer</title>
+
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@^5.9.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@^5.9.0/dist/maplibre-gl.css" rel="stylesheet">
+
+
+    <!-- PMTiles -->
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100vh;
+        }
+
+        #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* Left controls container */
+        .left-controls-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            max-width: 380px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+        }
+
+        .left-controls-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .left-controls-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .left-controls-container::-webkit-scrollbar-thumb {
+            background-color: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+
+        .left-controls-container::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(156, 163, 175, 0.7);
+        }
+
+        .control-panel {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            will-change: transform;
+        }
+
+        @media (max-width: 640px) {
+            .left-controls-container {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+                max-height: calc(100vh - 20px);
+                max-height: calc(100dvh - 20px);
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .control-panel {
+                max-height: none;
+            }
+        }
+
+        .category-checkbox:checked + label .category-indicator {
+            opacity: 1;
+        }
+
+        .category-checkbox:not(:checked) + label .category-indicator {
+            opacity: 0.3;
+        }
+
+        .category-indicator {
+            transition: opacity 0.2s ease;
+        }
+
+        input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        label {
+            cursor: pointer;
+        }
+
+        /* Exclusive selection button styles */
+        .exclusive-select-btn {
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            cursor: pointer;
+            padding: 3px 6px;
+            border-radius: 3px;
+            background-color: #4361EE;
+            color: white;
+            font-size: 8px;
+            font-weight: 600;
+            border: none;
+            flex-shrink: 0;
+            margin-right: 4px;
+        }
+
+        .exclusive-select-btn:hover {
+            background-color: #3451d4;
+        }
+
+        @media (max-width: 640px) {
+            .exclusive-select-btn {
+                font-size: 7px;
+                padding: 2px 4px;
+            }
+        }
+
+        .filter-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-item:hover .exclusive-select-btn {
+            opacity: 1;
+        }
+
+        /* Statistics columns */
+        .stats-header {
+            display: grid;
+            grid-template-columns: 160px 1fr 1fr;
+            gap: 8px;
+            font-size: 9px;
+            font-weight: 600;
+            color: #6B7280;
+            text-transform: uppercase;
+            padding: 6px 4px 4px 4px;
+            border-bottom: 1px solid #E5E7EB;
+            margin-bottom: 6px;
+        }
+
+        .filter-item {
+            display: grid;
+            grid-template-columns: 160px 1fr 1fr;
+            gap: 8px;
+            align-items: center;
+            padding: 4px 4px;
+            margin-bottom: 3px;
+            position: relative;
+        }
+
+        .filter-item-content {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .filter-item-content input[type="checkbox"] {
+            flex-shrink: 0;
+            margin: 0;
+        }
+
+        .filter-item-content label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
+            min-width: 0;
+            margin: 0;
+        }
+
+        .filter-item-content label span:last-child {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Bar chart styles */
+        .stat-bar-container {
+            position: relative;
+            height: 20px;
+            background: #E5E7EB;
+            border-radius: 3px;
+            overflow: hidden;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4361EE, #5A7BF5);
+            border-radius: 0 3px 3px 0;
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            will-change: width;
+            box-shadow: 0 1px 3px rgba(67, 97, 238, 0.3);
+        }
+
+        .stat-bar-label {
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 9px;
+            font-weight: 600;
+            color: #374151;
+            pointer-events: none;
+            z-index: 1;
+            white-space: nowrap;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+        }
+
+        .stat-bar.high .stat-bar-label {
+            left: auto;
+            right: 4px;
+            color: white;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+
+        .stat-bar.low .stat-bar-label {
+            left: calc(100% + 6px);
+            right: auto;
+            color: #4361EE;
+            font-weight: 700;
+            text-shadow: none;
+        }
+
+        /* Mobile horizontal scrollable statistics */
+        @media (max-width: 640px) {
+            /* Make the entire controls container horizontally scrollable */
+            #category-controls,
+            #building-use-controls {
+                overflow-x: auto;
+                overflow-y: visible;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: thin;
+                scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+            }
+
+            #category-controls::-webkit-scrollbar,
+            #building-use-controls::-webkit-scrollbar {
+                height: 4px;
+            }
+
+            #category-controls::-webkit-scrollbar-track,
+            #building-use-controls::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            #category-controls::-webkit-scrollbar-thumb,
+            #building-use-controls::-webkit-scrollbar-thumb {
+                background-color: rgba(156, 163, 175, 0.5);
+                border-radius: 2px;
+            }
+
+            /* Keep the grid structure but set a minimum width */
+            .stats-header {
+                display: grid;
+                grid-template-columns: 160px 100px 100px;
+                gap: 8px;
+                font-size: 8px;
+                min-width: 380px;
+            }
+
+            .filter-item {
+                display: grid;
+                grid-template-columns: 160px 100px 100px;
+                gap: 8px;
+                min-width: 380px;
+            }
+
+            .stat-bar-container {
+                height: 18px;
+            }
+
+            .stat-bar-label {
+                font-size: 8px;
+            }
+
+            .filter-item-content label span:last-child {
+                font-size: 11px;
+            }
+        }
+
+        @media (max-width: 640px) {
+            /* Adjust navigation controls on mobile to prevent cutoff */
+            .maplibregl-ctrl-bottom-right {
+                bottom: 10px !important;
+                right: 10px !important;
+                margin-bottom: env(safe-area-inset-bottom, 10px) !important;
+                margin-right: env(safe-area-inset-right, 0) !important;
+            }
+
+            /* Ensure map viewport is fully visible on mobile */
+            #map {
+                height: 100vh;
+                height: 100dvh; /* Use dynamic viewport height for mobile */
+            }
+        }
+
+        /* Custom draw controls - integrated with MapLibre controls */
+        .maplibregl-ctrl-group .draw-control-button {
+            background: #fff;
+            border: none;
+            width: 29px;
+            height: 29px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            border-top: 1px solid #ddd;
+            padding: 0;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button:hover {
+            background: #f2f2f2;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.active {
+            background: #4361EE;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.active svg {
+            stroke: white;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button svg {
+            width: 18px;
+            height: 18px;
+            stroke: #333;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.clear-button {
+            display: none;
+        }
+
+        .maplibregl-ctrl-group .draw-control-button.clear-button.visible {
+            display: flex;
+        }
+
+        /* Custom popup styling to match control panel */
+        .maplibregl-popup-content {
+            background: rgba(255, 255, 255, 0.97);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+            padding: 12px 14px;
+        }
+
+        .maplibregl-popup-close-button {
+            display: none;
+        }
+
+        .maplibregl-popup-tip {
+            border-top-color: rgba(255, 255, 255, 0.97);
+        }
+
+        .maplibregl-popup {
+            will-change: transform;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <canvas id="drawing-canvas"></canvas>
+
+    <!-- Left Controls Container -->
+    <div class="left-controls-container">
+        <!-- Control Panel -->
+        <div class="control-panel">
+        <div class="p-4">
+            <!-- Title -->
+            <!--<h1 class="text-lg font-bold text-gray-800 mb-4">Building Forms</h1> -->
+
+            <!-- Toggle Button (Mobile Only) -->
+            <button id="toggle-panel" class="md:hidden w-full mb-3 px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors flex items-center justify-between">
+                <span>Map Information</span>
+                <span id="toggle-icon">▼</span>
+            </button>
+
+            <!-- Collapsible Section -->
+            <div id="category-section" class="hidden md:block">
+                <!-- Building Typologies Filter -->
+                <div class="mb-6">
+                    <button id="building-typology-toggle" class="w-full flex items-center justify-between px-3 py-2 text-sm font-semibold text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors">
+                        <span>Building Typologies</span>
+                        <span id="typology-toggle-icon" class="text-xs">▲</span>
+                    </button>
+                    <div id="category-controls" class="space-y-2 mt-2">
+                        <!-- Categories will be dynamically generated here -->
+                    </div>
+                </div>
+
+                <!-- Building Use Filter -->
+                <div class="mb-6">
+                    <button id="building-use-toggle" class="w-full flex items-center justify-between px-3 py-2 text-sm font-semibold text-gray-700 bg-gray-100 rounded hover:bg-gray-200 transition-colors">
+                        <span>Building Use</span>
+                        <span id="use-toggle-icon" class="text-xs">▼</span>
+                    </button>
+                    <div id="building-use-controls" class="space-y-2 mt-2 hidden">
+                        <!-- Building use checkboxes will be dynamically generated here -->
+                    </div>
+                </div>
+
+                <!-- About Section -->
+                <div class="bg-gray-100 p-3" style="border-radius: 8px;">
+                    <p class="text-xs text-gray-700 leading-relaxed mb-3">
+                        RKG's urban form model utilizes a proprietary clustering technique to study the existing built form across an area. It groups any collection of buildings based on their physical properties and relative positioning.
+                    </p><br>
+                    <div class="flex items-center gap-3">
+                        <a href="https://www.linkedin.com/company/rkgassociates/posts/?feedView=all" target="_blank" class="hover:opacity-80 transition-opacity">
+                            <img src="rkglogo_red.png" alt="RKG Associates Logo" style="height: 16px;">
+                        </a>
+                        <div class="border-l border-gray-400 h-8"></div>
+                        <p class="text-xs font-medium text-gray-600 italic leading-tight">
+                            Economic, Planning &<br>Real Estate Consultants
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script>
+        // Add PMTiles protocol
+        let protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        // Geocoding cache to prevent redundant API calls
+        const geocodingCache = new Map();
+        const GEOCODING_CACHE_SIZE = 100;
+
+        // Rate limiting for geocoding API
+        let lastGeocodingCall = 0;
+        const GEOCODING_RATE_LIMIT = 1000; // 1 second between calls (Nominatim requirement)
+
+        // Color palette for categories
+        const categoryColors = {
+            1: '#E63946',
+            2: '#F77F00',
+            3: '#FCBF49',
+            4: '#06A77D',
+            5: '#4361EE',
+            6: '#7209B7',
+            7: '#D90429',
+            8: '#2A9D8F'
+        };
+
+        // High-quality Carto Voyager basemap style with clear greenspace (no token required)
+        const basemapStyle = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+
+        // Initialize map centered on Boston (shifted 3 miles south, 1.5 miles west)
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: basemapStyle,
+            center: [-71.0806, 42.3166], // Boston coordinates, ~3 miles south, ~1.5 miles west
+            zoom: 12.5,
+            pitch: 50, // Tilt for 3D view
+            maxPitch: 85, // Allow steeper viewing angles for terrain
+            antialias: true,
+            // Performance optimizations
+            preserveDrawingBuffer: false,
+            refreshExpiredTiles: false,
+            fadeDuration: 150
+        });
+
+        // Add navigation controls
+        map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+        // Custom freehand drawing implementation (works on desktop and mobile)
+        let drawMode = false;
+        let isActivelyDrawing = false;
+        let drawingCoords = [];
+        let drawnPolygon = null;
+        let areaFilterActive = false;
+
+        // Canvas-based drawing for instant visual feedback
+        const canvas = document.getElementById('drawing-canvas');
+        const ctx = canvas.getContext('2d');
+        let canvasPixelCoords = [];
+
+        // Setup canvas size
+        const resizeCanvas = () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        };
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Add custom draw buttons to the navigation control group
+        let drawButton, clearButton;
+
+        // Wait for navigation controls to be added to DOM
+        setTimeout(() => {
+            const navControl = document.querySelector('.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group');
+
+            if (navControl) {
+                // Create draw button
+                drawButton = document.createElement('button');
+                drawButton.className = 'draw-control-button';
+                drawButton.title = 'Draw area to filter buildings';
+                drawButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                `;
+
+                // Create clear button
+                clearButton = document.createElement('button');
+                clearButton.className = 'draw-control-button clear-button';
+                clearButton.title = 'Clear drawn area';
+                clearButton.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                `;
+
+                // Add buttons to navigation control group
+                navControl.appendChild(drawButton);
+                navControl.appendChild(clearButton);
+
+                // Toggle draw mode
+                drawButton.addEventListener('click', () => {
+                    drawMode = !drawMode;
+                    if (drawMode) {
+                        drawButton.classList.add('active');
+                        map.getCanvas().style.cursor = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%234361EE\' stroke-width=\'2\'><path d=\'M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z\'/></svg>") 0 24, crosshair';
+                    } else {
+                        drawButton.classList.remove('active');
+                        map.getCanvas().style.cursor = '';
+                    }
+                });
+
+                // Clear drawn area
+                clearButton.addEventListener('click', () => {
+                    clearDrawing();
+                });
+            }
+        }, 100);
+
+        const clearDrawing = () => {
+            if (map.getSource('drawn-polygon')) {
+                if (map.getLayer('drawn-polygon-outline')) {
+                    map.removeLayer('drawn-polygon-outline');
+                }
+                map.removeSource('drawn-polygon');
+            }
+            if (map.getSource('drawing-line')) {
+                map.removeLayer('drawing-line');
+                map.removeSource('drawing-line');
+            }
+            drawnPolygon = null;
+            filteredBuildingIds.clear();
+            areaFilterActive = false;
+            drawingCoords = [];
+            canvasPixelCoords = [];
+            isActivelyDrawing = false;
+            drawMode = false;
+            if (drawButton) drawButton.classList.remove('active');
+            if (clearButton) clearButton.classList.remove('visible');
+            map.getCanvas().style.cursor = '';
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            applyFilter();
+        };
+
+        // Point-in-polygon check using ray casting algorithm
+        const isPointInPolygon = (point, polygonCoords) => {
+            const x = point[0];
+            const y = point[1];
+            let inside = false;
+
+            for (let i = 0, j = polygonCoords.length - 1; i < polygonCoords.length; j = i++) {
+                const xi = polygonCoords[i][0];
+                const yi = polygonCoords[i][1];
+                const xj = polygonCoords[j][0];
+                const yj = polygonCoords[j][1];
+
+                const intersect = ((yi > y) !== (yj > y)) &&
+                    (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+
+            return inside;
+        };
+
+        // Query buildings within the drawn polygon (optimized)
+        const queryBuildingsInPolygon = () => {
+            if (!drawnPolygon) return;
+
+            filteredBuildingIds.clear();
+
+            // Get bounding box of drawn polygon for initial filtering
+            const coords = drawnPolygon.coordinates[0];
+            let minLng = Infinity, maxLng = -Infinity;
+            let minLat = Infinity, maxLat = -Infinity;
+
+            for (let i = 0; i < coords.length; i++) {
+                const lng = coords[i][0];
+                const lat = coords[i][1];
+                if (lng < minLng) minLng = lng;
+                if (lng > maxLng) maxLng = lng;
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+            }
+
+            // Pre-calculate screen bbox for faster querying
+            const bbox = [
+                map.project([minLng, minLat]),
+                map.project([maxLng, maxLat])
+            ];
+
+            // Query source features within the visible area only (much faster than querying everything)
+            // querySourceFeatures returns ALL features from loaded tiles regardless of filters
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'bldgs'
+            });
+
+            // Process features efficiently with early bbox rejection
+            const polygonCoords = drawnPolygon.coordinates[0];
+
+            for (let i = 0; i < features.length; i++) {
+                const feature = features[i];
+                if (feature.geometry && feature.geometry.type === 'Polygon') {
+                    const coords = feature.geometry.coordinates[0];
+                    const len = coords.length;
+
+                    // Calculate centroid inline
+                    let centroidLng = 0;
+                    let centroidLat = 0;
+                    for (let j = 0; j < len; j++) {
+                        centroidLng += coords[j][0];
+                        centroidLat += coords[j][1];
+                    }
+                    centroidLng /= len;
+                    centroidLat /= len;
+
+                    // Quick bbox check before expensive point-in-polygon test
+                    if (centroidLng >= minLng && centroidLng <= maxLng &&
+                        centroidLat >= minLat && centroidLat <= maxLat) {
+
+                        // Only do expensive point-in-polygon check if inside bbox
+                        if (isPointInPolygon([centroidLng, centroidLat], polygonCoords)) {
+                            if (feature.id !== undefined) {
+                                filteredBuildingIds.add(feature.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            console.log(`Found ${filteredBuildingIds.size} buildings within drawn area`);
+        };
+
+        const finishDrawing = () => {
+            if (drawingCoords.length < 3) {
+                clearDrawing();
+                return;
+            }
+
+            // Close the polygon
+            drawingCoords.push(drawingCoords[0]);
+
+            // Create polygon (store it but don't display it)
+            drawnPolygon = {
+                type: 'Polygon',
+                coordinates: [drawingCoords]
+            };
+
+            // Clear the canvas since we're done drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvasPixelCoords = [];
+
+            isActivelyDrawing = false;
+            drawMode = false;
+            areaFilterActive = true;
+            if (drawButton) drawButton.classList.remove('active');
+            if (clearButton) clearButton.classList.add('visible');
+            map.getCanvas().style.cursor = '';
+
+            // Query buildings within polygon and apply filter
+            queryBuildingsInPolygon();
+            applyFilter();
+        };
+
+        // Mouse/Touch handlers
+        const startDrawing = (e) => {
+            if (!drawMode) return;
+            isActivelyDrawing = true;
+
+            const point = e.point || map.project(e.lngLat);
+            const lngLat = e.lngLat;
+
+            drawingCoords = [[lngLat.lng, lngLat.lat]];
+            canvasPixelCoords = [[point.x, point.y]];
+            lastPoint = [lngLat.lng, lngLat.lat];
+            map.dragPan.disable();
+
+            // Clear canvas for new drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        };
+
+        // Drawing state
+        let lastPoint = null;
+        const MIN_DISTANCE_PIXELS = 2; // Very small distance for smooth drawing
+
+        const continueDrawing = (e) => {
+            if (!drawMode || !isActivelyDrawing) return;
+
+            const point = e.point || map.project(e.lngLat);
+            const lngLat = e.lngLat;
+
+            // Calculate pixel distance from last point
+            const lastPixelPoint = canvasPixelCoords[canvasPixelCoords.length - 1];
+            const dx = point.x - lastPixelPoint[0];
+            const dy = point.y - lastPixelPoint[1];
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Skip if too close to last point
+            if (distance < MIN_DISTANCE_PIXELS) {
+                return;
+            }
+
+            // Add to coordinate arrays
+            drawingCoords.push([lngLat.lng, lngLat.lat]);
+            canvasPixelCoords.push([point.x, point.y]);
+            lastPoint = [lngLat.lng, lngLat.lat];
+
+            // Draw directly on canvas - INSTANT feedback, no MapLibre overhead
+            ctx.strokeStyle = '#4361EE';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(lastPixelPoint[0], lastPixelPoint[1]);
+            ctx.lineTo(point.x, point.y);
+            ctx.stroke();
+        };
+
+        const stopDrawing = () => {
+            if (!drawMode || !isActivelyDrawing) return;
+            map.dragPan.enable();
+            lastPoint = null; // Reset for next drawing
+            finishDrawing();
+        };
+
+        // Desktop mouse events
+        map.on('mousedown', (e) => {
+            startDrawing(e);
+        });
+
+        map.on('mousemove', (e) => {
+            continueDrawing(e);
+        });
+
+        map.on('mouseup', () => {
+            stopDrawing();
+        });
+
+        // Mobile touch events
+        map.on('touchstart', (e) => {
+            if (e.points.length === 1) {
+                startDrawing(e);
+            }
+        });
+
+        map.on('touchmove', (e) => {
+            if (e.points.length === 1) {
+                continueDrawing(e);
+            }
+        });
+
+        map.on('touchend', () => {
+            stopDrawing();
+        });
+
+        // Store available categories found in data
+        let availableCategories = [];
+
+        // Building use types
+        const buildingUseTypes = [
+            'Residential',
+            'Mixed Use',
+            'Commercial',
+            'Industrial',
+            'Institutional',
+            'Other'
+        ];
+
+        // Store selected building uses (all selected by default)
+        let selectedBuildingUses = new Set(buildingUseTypes);
+
+        // Store filtered building features
+        let filteredBuildingIds = new Set();
+
+        // Create filter expression that combines category filter, building use filter, and area filter
+        const createFilter = () => {
+            const visibleCategories = [];
+            availableCategories.forEach(cat => {
+                const checkbox = document.getElementById(`category-${cat}`);
+                if (checkbox && checkbox.checked) {
+                    visibleCategories.push(cat);
+                }
+            });
+
+            // Category filter
+            let categoryFilter;
+            if (visibleCategories.length === 0) {
+                categoryFilter = ['==', ['get', 'form_cat'], -1]; // Show nothing
+            } else {
+                categoryFilter = ['in', ['get', 'form_cat'], ['literal', visibleCategories]];
+            }
+
+            // Building use filter
+            let buildingUseFilter;
+            const selectedUsesArray = Array.from(selectedBuildingUses);
+            if (selectedUsesArray.length === 0) {
+                buildingUseFilter = ['==', ['get', 'Bldg_Use'], '']; // Show nothing
+            } else {
+                buildingUseFilter = ['in', ['get', 'Bldg_Use'], ['literal', selectedUsesArray]];
+            }
+
+            // Combine filters
+            let combinedFilter = ['all', categoryFilter, buildingUseFilter];
+
+            // If area filter is active, add spatial filter
+            if (areaFilterActive && drawnPolygon && filteredBuildingIds.size > 0) {
+                const buildingIdsArray = Array.from(filteredBuildingIds);
+                combinedFilter = ['all',
+                    categoryFilter,
+                    buildingUseFilter,
+                    ['in', ['id'], ['literal', buildingIdsArray]]
+                ];
+            }
+
+            return combinedFilter;
+        };
+
+        // Debounce helper for performance optimization
+        let statsUpdateTimer = null;
+        const debounce = (func, delay) => {
+            return function(...args) {
+                clearTimeout(statsUpdateTimer);
+                statsUpdateTimer = setTimeout(() => func.apply(this, args), delay);
+            };
+        };
+
+        // Throttle helper to limit function calls during continuous events
+        let throttleTimeout = null;
+        let throttleLastCall = 0;
+        const throttle = (func, delay) => {
+            return function(...args) {
+                const now = Date.now();
+                if (now - throttleLastCall >= delay) {
+                    throttleLastCall = now;
+                    func.apply(this, args);
+                }
+            };
+        };
+
+        // Function to calculate and update statistics based on currently visible buildings
+        const updateStatistics = () => {
+            if (!map.getLayer('buildings-3d')) return;
+
+            // Query source features (more efficient than rendered features for large datasets)
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'bldgs',
+                filter: createFilter()
+            });
+
+            // Use efficient counting without storing all values
+            const categoryStats = {};
+            const categoryHeightSums = {};
+            const categoryCounts = {};
+
+            const useStats = {};
+            const useHeightSums = {};
+            const useCounts = {};
+
+            // Initialize
+            availableCategories.forEach(cat => {
+                categoryStats[cat] = 0;
+                categoryHeightSums[cat] = 0;
+                categoryCounts[cat] = 0;
+            });
+
+            buildingUseTypes.forEach(useType => {
+                useStats[useType] = 0;
+                useHeightSums[useType] = 0;
+                useCounts[useType] = 0;
+            });
+
+            // Single pass through features - much more efficient
+            let totalBuildings = 0;
+            for (let i = 0; i < features.length; i++) {
+                const props = features[i].properties;
+                const category = props.form_cat;
+                const useType = props.Bldg_Use;
+                const height = props.height;
+
+                totalBuildings++;
+
+                if (category !== null && category !== undefined) {
+                    categoryStats[category] = (categoryStats[category] || 0) + 1;
+                    if (height) {
+                        categoryHeightSums[category] = (categoryHeightSums[category] || 0) + height;
+                        categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+                    }
+                }
+
+                if (useType) {
+                    useStats[useType] = (useStats[useType] || 0) + 1;
+                    if (height) {
+                        useHeightSums[useType] = (useHeightSums[useType] || 0) + height;
+                        useCounts[useType] = (useCounts[useType] || 0) + 1;
+                    }
+                }
+            }
+
+            // Update DOM in batch
+            const updates = [];
+
+            // Find max height for scaling bars
+            let maxHeight = 0;
+            availableCategories.forEach(cat => {
+                if (categoryCounts[cat] > 0) {
+                    const avgHeight = (categoryHeightSums[cat] / categoryCounts[cat]) * 3.28084;
+                    if (avgHeight > maxHeight) maxHeight = avgHeight;
+                }
+            });
+            buildingUseTypes.forEach(useType => {
+                if (useCounts[useType] > 0) {
+                    const avgHeight = (useHeightSums[useType] / useCounts[useType]) * 3.28084;
+                    if (avgHeight > maxHeight) maxHeight = avgHeight;
+                }
+            });
+
+            availableCategories.forEach(cat => {
+                const count = categoryStats[cat] || 0;
+                const percent = totalBuildings > 0 ? ((count / totalBuildings) * 100) : 0;
+                const avgHeightFt = categoryCounts[cat] > 0
+                    ? ((categoryHeightSums[cat] / categoryCounts[cat]) * 3.28084)
+                    : 0;
+
+                const percentWidth = percent;
+                const heightWidth = maxHeight > 0 ? (avgHeightFt / maxHeight) * 100 : 0;
+
+                updates.push({
+                    id: `category-${cat}-percent`,
+                    text: `${percent.toFixed(1)}%`,
+                    barId: `category-${cat}-percent-bar`,
+                    width: percentWidth
+                });
+                updates.push({
+                    id: `category-${cat}-height`,
+                    text: `${avgHeightFt.toFixed(0)} ft`,
+                    barId: `category-${cat}-height-bar`,
+                    width: heightWidth
+                });
+            });
+
+            buildingUseTypes.forEach(useType => {
+                const count = useStats[useType] || 0;
+                const percent = totalBuildings > 0 ? ((count / totalBuildings) * 100) : 0;
+                const avgHeightFt = useCounts[useType] > 0
+                    ? ((useHeightSums[useType] / useCounts[useType]) * 3.28084)
+                    : 0;
+
+                const percentWidth = percent;
+                const heightWidth = maxHeight > 0 ? (avgHeightFt / maxHeight) * 100 : 0;
+
+                updates.push({
+                    id: `use-${useType.replace(/\s+/g, '-')}-percent`,
+                    text: `${percent.toFixed(1)}%`,
+                    barId: `use-${useType.replace(/\s+/g, '-')}-percent-bar`,
+                    width: percentWidth
+                });
+                updates.push({
+                    id: `use-${useType.replace(/\s+/g, '-')}-height`,
+                    text: `${avgHeightFt.toFixed(0)} ft`,
+                    barId: `use-${useType.replace(/\s+/g, '-')}-height-bar`,
+                    width: heightWidth
+                });
+            });
+
+            // Batch DOM updates
+            requestAnimationFrame(() => {
+                updates.forEach(update => {
+                    const labelEl = document.getElementById(update.id);
+                    const barEl = document.getElementById(update.barId);
+
+                    if (labelEl) labelEl.textContent = update.text;
+                    if (barEl) {
+                        barEl.style.width = `${update.width}%`;
+                        // Remove all classes first
+                        barEl.classList.remove('high', 'low');
+
+                        // Simple logic: if bar is 50% or more, text inside (white)
+                        // If bar is under 50%, text outside (blue)
+                        if (update.width >= 50) {
+                            // Wide bar: white text inside
+                            barEl.classList.add('high');
+                        } else {
+                            // Narrow bar: blue text outside to the right
+                            barEl.classList.add('low');
+                        }
+                    }
+                });
+            });
+        };
+
+        // Debounced version for move events
+        const updateStatisticsDebounced = debounce(updateStatistics, 500);
+
+        // Function to apply the combined filter
+        const applyFilter = () => {
+            if (map.getLayer('buildings-3d')) {
+                map.setFilter('buildings-3d', createFilter());
+                // Update statistics after filter is applied (debounced)
+                updateStatisticsDebounced();
+            }
+        };
+
+        // Function to detect categories and create checkboxes
+        // For vector tiles, we'll query the rendered features to determine available categories
+        const initializeCategoryControls = () => {
+            // Query rendered features to find unique categories
+            const features = map.querySourceFeatures('buildings', {
+                sourceLayer: 'bldgs'
+            });
+
+            const categoriesSet = new Set();
+            features.forEach(feature => {
+                const category = feature.properties.form_cat;
+                if (category !== null && category !== undefined) {
+                    categoriesSet.add(category);
+                }
+            });
+
+            // Convert to sorted array
+            availableCategories = Array.from(categoriesSet).sort((a, b) => a - b);
+
+            // Generate checkboxes for available categories
+            const controlsContainer = document.getElementById('category-controls');
+            controlsContainer.innerHTML = '';
+
+            // Add stats header
+            const statsHeaderHtml = `
+                <div class="stats-header">
+                    <div></div>
+                    <div>% Makeup</div>
+                    <div>Avg Height</div>
+                </div>
+            `;
+            controlsContainer.insertAdjacentHTML('beforeend', statsHeaderHtml);
+
+            availableCategories.forEach(cat => {
+                const color = categoryColors[cat] || '#CCCCCC';
+                const checkboxHtml = `
+                    <div class="filter-item">
+                        <div class="filter-item-content">
+                            <button class="exclusive-select-btn" data-category="${cat}" title="Select only this category">ONLY</button>
+                            <input type="checkbox" id="category-${cat}" class="category-checkbox" checked>
+                            <label for="category-${cat}">
+                                <span class="category-indicator w-4 h-4 rounded" style="background-color: ${color}; flex-shrink: 0;"></span>
+                                <span class="text-sm text-gray-700" style="font-size: 12px;">Category ${cat}</span>
+                            </label>
+                        </div>
+                        <div class="stat-bar-container" title="% Makeup">
+                            <div class="stat-bar" id="category-${cat}-percent-bar" style="width: 0%;">
+                                <span class="stat-bar-label" id="category-${cat}-percent">-</span>
+                            </div>
+                        </div>
+                        <div class="stat-bar-container" title="Average Height">
+                            <div class="stat-bar" id="category-${cat}-height-bar" style="width: 0%;">
+                                <span class="stat-bar-label" id="category-${cat}-height">-</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                controlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to checkboxes
+            availableCategories.forEach(cat => {
+                const checkbox = document.getElementById(`category-${cat}`);
+
+                // Handle checkbox changes
+                checkbox.addEventListener('change', () => {
+                    applyFilter();
+                });
+            });
+
+            // Add event listeners to exclusive selection buttons
+            const exclusiveButtons = controlsContainer.querySelectorAll('.exclusive-select-btn');
+            exclusiveButtons.forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const category = parseInt(button.dataset.category);
+
+                    // Uncheck all categories except this one
+                    availableCategories.forEach(cat => {
+                        const checkbox = document.getElementById(`category-${cat}`);
+                        checkbox.checked = (cat === category);
+                    });
+                    applyFilter();
+                });
+            });
+
+            // Initialize building use controls
+            initializeBuildingUseControls();
+        };
+
+        // Function to create building use checkboxes
+        const initializeBuildingUseControls = () => {
+            const useControlsContainer = document.getElementById('building-use-controls');
+            useControlsContainer.innerHTML = '';
+
+            // Add stats header
+            const useStatsHeaderHtml = `
+                <div class="stats-header">
+                    <div></div>
+                    <div>% Makeup</div>
+                    <div>Avg Height</div>
+                </div>
+            `;
+            useControlsContainer.insertAdjacentHTML('beforeend', useStatsHeaderHtml);
+
+            buildingUseTypes.forEach(useType => {
+                const checkboxHtml = `
+                    <div class="filter-item">
+                        <div class="filter-item-content">
+                            <button class="exclusive-select-btn" data-use-type="${useType}" title="Select only ${useType}">ONLY</button>
+                            <input type="checkbox" id="use-${useType.replace(/\s+/g, '-')}" class="use-checkbox" checked>
+                            <label for="use-${useType.replace(/\s+/g, '-')}">
+                                <span class="text-sm text-gray-700" style="font-size: 12px;">${useType}</span>
+                            </label>
+                        </div>
+                        <div class="stat-bar-container" title="% Makeup">
+                            <div class="stat-bar" id="use-${useType.replace(/\s+/g, '-')}-percent-bar" style="width: 0%;">
+                                <span class="stat-bar-label" id="use-${useType.replace(/\s+/g, '-')}-percent">-</span>
+                            </div>
+                        </div>
+                        <div class="stat-bar-container" title="Average Height">
+                            <div class="stat-bar" id="use-${useType.replace(/\s+/g, '-')}-height-bar" style="width: 0%;">
+                                <span class="stat-bar-label" id="use-${useType.replace(/\s+/g, '-')}-height">-</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                useControlsContainer.insertAdjacentHTML('beforeend', checkboxHtml);
+            });
+
+            // Add event listeners to building use checkboxes
+            buildingUseTypes.forEach(useType => {
+                const checkbox = document.getElementById(`use-${useType.replace(/\s+/g, '-')}`);
+
+                // Handle checkbox changes
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedBuildingUses.add(useType);
+                    } else {
+                        selectedBuildingUses.delete(useType);
+                    }
+                    applyFilter();
+                });
+            });
+
+            // Add event listeners to exclusive selection buttons
+            const useExclusiveButtons = useControlsContainer.querySelectorAll('.exclusive-select-btn');
+            useExclusiveButtons.forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const useType = button.dataset.useType;
+
+                    // Clear all selections and select only this one
+                    selectedBuildingUses.clear();
+                    selectedBuildingUses.add(useType);
+
+                    // Update all checkboxes
+                    buildingUseTypes.forEach(otherUseType => {
+                        const checkbox = document.getElementById(`use-${otherUseType.replace(/\s+/g, '-')}`);
+                        checkbox.checked = (otherUseType === useType);
+                    });
+                    applyFilter();
+                });
+            });
+
+            // Add toggle functionality for building use dropdown
+            const toggleButton = document.getElementById('building-use-toggle');
+            const toggleIcon = document.getElementById('use-toggle-icon');
+
+            if (toggleButton) {
+                toggleButton.addEventListener('click', () => {
+                    useControlsContainer.classList.toggle('hidden');
+                    toggleIcon.textContent = useControlsContainer.classList.contains('hidden') ? '▼' : '▲';
+                });
+            }
+
+            // Add toggle functionality for building typology dropdown
+            const typologyToggleButton = document.getElementById('building-typology-toggle');
+            const typologyToggleIcon = document.getElementById('typology-toggle-icon');
+            const categoryControlsContainer = document.getElementById('category-controls');
+
+            if (typologyToggleButton) {
+                typologyToggleButton.addEventListener('click', () => {
+                    categoryControlsContainer.classList.toggle('hidden');
+                    typologyToggleIcon.textContent = categoryControlsContainer.classList.contains('hidden') ? '▼' : '▲';
+                });
+            }
+        };
+
+        // Load data and add layers when map loads
+        map.on('load', () => {
+            // Remove any building layers from the basemap style (both 3D and 2D footprints)
+            const layers = map.getStyle().layers;
+            const layersToRemove = [];
+
+            layers.forEach(layer => {
+                const id = layer.id.toLowerCase();
+                const sourceLayer = layer['source-layer'] ? layer['source-layer'].toLowerCase() : '';
+
+                // Remove 3D buildings (fill-extrusion)
+                if (layer.type === 'fill-extrusion') {
+                    layersToRemove.push(layer.id);
+                }
+                // Remove 2D building footprints (fill layers with building in id or source)
+                else if (layer.type === 'fill' &&
+                        (id.includes('building') || sourceLayer.includes('building'))) {
+                    layersToRemove.push(layer.id);
+                }
+                // Remove building outlines
+                else if (layer.type === 'line' &&
+                        (id.includes('building') || sourceLayer.includes('building'))) {
+                    layersToRemove.push(layer.id);
+                }
+            });
+
+            // Remove all identified building layers
+            layersToRemove.forEach(layerId => {
+                try {
+                    map.removeLayer(layerId);
+                    console.log(`Removed basemap layer: ${layerId}`);
+                } catch (e) {
+                    console.warn(`Could not remove layer ${layerId}:`, e);
+                }
+            });
+
+            // Add background buildings source from Cloudflare R2
+            map.addSource('background-buildings', {
+                type: 'vector',
+                url: 'pmtiles://https://pub-0726f703ee7e4b3899b6c4361a83c890.r2.dev/backgroundbldgs.pmtiles'
+            });
+
+            // Add background buildings layer (rendered first, behind main buildings)
+            map.addLayer({
+                id: 'background-buildings-3d',
+                type: 'fill-extrusion',
+                source: 'background-buildings',
+                'source-layer': 'bldgs',
+                paint: {
+                    'fill-extrusion-color': '#FFFFFF',
+                    'fill-extrusion-height': ['*', ['get', 'height'], 1.5],
+                    'fill-extrusion-base': 0,
+                    'fill-extrusion-opacity': 0.4
+                }
+            });
+
+            // Add buildings source from local PMTiles file
+            map.addSource('buildings', {
+                type: 'vector',
+                url: 'pmtiles://bldgs.pmtiles'
+            });
+
+            // Add 3D buildings layer without filter initially
+            map.addLayer({
+                id: 'buildings-3d',
+                type: 'fill-extrusion',
+                source: 'buildings',
+                'source-layer': 'bldgs',
+                paint: {
+                    'fill-extrusion-color': [
+                        'match',
+                        ['get', 'form_cat'],
+                        1, categoryColors[1],
+                        2, categoryColors[2],
+                        3, categoryColors[3],
+                        4, categoryColors[4],
+                        5, categoryColors[5],
+                        6, categoryColors[6],
+                        7, categoryColors[7],
+                        8, categoryColors[8],
+                        '#CCCCCC' // Default color for unknown categories
+                    ],
+                    'fill-extrusion-height': ['*', ['get', 'height'], 1.5],
+                    'fill-extrusion-base': ['*', ['get', 'min_height'], 1.5],
+                    'fill-extrusion-opacity': 0.8
+                }
+            });
+
+
+            // Move place labels (cities, towns, neighborhoods) above buildings
+            // Wait for style to be fully loaded
+            const movePlaceLabels = () => {
+                const layers = map.getStyle().layers;
+
+                // Find all place label layers including neighborhoods (but not road labels)
+                const placeLabels = layers.filter(layer => {
+                    const id = layer.id.toLowerCase();
+                    const type = layer.type;
+
+                    // Include place/settlement/neighborhood labels, exclude road labels
+                    // Only include symbol layers (text/icons)
+                    return type === 'symbol' &&
+                           (id.includes('place') || id.includes('settlement') ||
+                            id.includes('city') || id.includes('town') ||
+                            id.includes('village') || id.includes('neighbourhood') ||
+                            id.includes('neighborhood') || id.includes('suburb') ||
+                            id.includes('quarter') || id.includes('district') ||
+                            id.includes('label')) &&
+                           !id.includes('road') && !id.includes('street') &&
+                           !id.includes('highway') && !id.includes('path') &&
+                           !id.includes('way') && !id.includes('avenue') &&
+                           !id.includes('motorway') && !id.includes('rail');
+                });
+
+                // Move each place label layer to the top (above all building layers)
+                placeLabels.forEach(layer => {
+                    try {
+                        map.moveLayer(layer.id);
+                    } catch (e) {
+                        console.warn(`Could not move layer ${layer.id}:`, e);
+                    }
+                });
+
+                console.log(`Moved ${placeLabels.length} place label layers to top`);
+            };
+
+            // Call after buildings are added with a slight delay to ensure all layers are loaded
+            setTimeout(() => {
+                movePlaceLabels();
+            }, 100);
+
+            // Wait for tiles to load before initializing category controls
+            map.on('idle', () => {
+                if (availableCategories.length === 0) {
+                    initializeCategoryControls();
+                    // Apply filter after controls are initialized
+                    map.setFilter('buildings-3d', createFilter());
+                    // Initial statistics update
+                    updateStatistics();
+                }
+            });
+
+            // Update statistics when map moves (panning/zooming changes visible buildings)
+            // Use debounced version to prevent excessive calculations
+            map.on('moveend', () => {
+                if (availableCategories.length > 0) {
+                    updateStatisticsDebounced();
+                }
+            });
+
+            // Add click interaction to show building properties (disabled during draw mode)
+            map.on('click', 'buildings-3d', async (e) => {
+                // Don't show popup if in draw mode
+                if (drawMode || isActivelyDrawing) return;
+
+                if (e.features.length > 0) {
+                    const properties = e.features[0].properties;
+                    const category = properties.form_cat;
+                    const buildingUse = properties.Bldg_Use || 'Unknown';
+                    const heightMeters = properties.height;
+                    const heightFeet = heightMeters ? Math.round(heightMeters * 3.28084) : null;
+
+                    // Show popup with loading state
+                    const popup = new maplibregl.Popup({ closeButton: false })
+                        .setLngLat(e.lngLat)
+                        .setHTML(`
+                            <div style="margin: 0; min-width: 180px;">
+                                <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: #374151;">Loading address...</div>
+                                <div style="font-size: 11px; color: #6B7280; line-height: 1.5;">
+                                    <div><strong>Category:</strong> ${category}</div>
+                                    <div><strong>Use:</strong> ${buildingUse}</div>
+                                    ${heightFeet ? `<div><strong>Height:</strong> ${heightFeet} ft</div>` : ''}
+                                </div>
+                            </div>
+                        `)
+                        .addTo(map);
+
+                    // Fetch address using Nominatim reverse geocoding (OpenStreetMap)
+                    // with caching and rate limiting
+                    try {
+                        const cacheKey = `${e.lngLat.lat.toFixed(5)},${e.lngLat.lng.toFixed(5)}`;
+                        let address = 'Address not found';
+
+                        // Check cache first
+                        if (geocodingCache.has(cacheKey)) {
+                            address = geocodingCache.get(cacheKey);
+                        } else {
+                            // Rate limiting check
+                            const now = Date.now();
+                            const timeSinceLastCall = now - lastGeocodingCall;
+                            if (timeSinceLastCall < GEOCODING_RATE_LIMIT) {
+                                await new Promise(resolve => setTimeout(resolve, GEOCODING_RATE_LIMIT - timeSinceLastCall));
+                            }
+                            lastGeocodingCall = Date.now();
+
+                            const response = await fetch(
+                                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${e.lngLat.lat}&lon=${e.lngLat.lng}&zoom=18&addressdetails=1`,
+                                {
+                                    headers: {
+                                        'User-Agent': 'UrbanFormViewer/1.0'
+                                    }
+                                }
+                            );
+                            const data = await response.json();
+
+                            if (data.address) {
+                                const parts = [];
+                                if (data.address.house_number) parts.push(data.address.house_number);
+                                if (data.address.road) parts.push(data.address.road);
+                                if (parts.length === 0) {
+                                    // Fallback to display_name if no street address
+                                    address = data.display_name.split(',').slice(0, 2).join(',');
+                                } else {
+                                    address = parts.join(' ');
+                                }
+                            }
+
+                            // Add to cache (with size limit)
+                            if (geocodingCache.size >= GEOCODING_CACHE_SIZE) {
+                                const firstKey = geocodingCache.keys().next().value;
+                                geocodingCache.delete(firstKey);
+                            }
+                            geocodingCache.set(cacheKey, address);
+                        }
+
+                        // Update popup with address
+                        popup.setHTML(`
+                            <div style="margin: 0; min-width: 180px;">
+                                <div style="font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #1F2937;">${address}</div>
+                                <div style="font-size: 11px; color: #6B7280; line-height: 1.6;">
+                                    <div><strong>Category:</strong> ${category}</div>
+                                    <div><strong>Use:</strong> ${buildingUse}</div>
+                                    ${heightFeet ? `<div><strong>Height:</strong> ${heightFeet} ft</div>` : ''}
+                                </div>
+                            </div>
+                        `);
+                    } catch (error) {
+                        console.error('Geocoding error:', error);
+                        // Keep popup with building info but update address line
+                        popup.setHTML(`
+                            <div style="margin: 0; min-width: 180px;">
+                                <div style="font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #1F2937;">${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}</div>
+                                <div style="font-size: 11px; color: #6B7280; line-height: 1.6;">
+                                    <div><strong>Category:</strong> ${category}</div>
+                                    <div><strong>Use:</strong> ${buildingUse}</div>
+                                    ${heightFeet ? `<div><strong>Height:</strong> ${heightFeet} ft</div>` : ''}
+                                </div>
+                            </div>
+                        `);
+                    }
+                }
+            });
+
+            // Change cursor on hover (disabled during draw mode)
+            map.on('mouseenter', 'buildings-3d', () => {
+                if (!drawMode && !isActivelyDrawing) {
+                    map.getCanvas().style.cursor = 'pointer';
+                }
+            });
+
+            map.on('mouseleave', 'buildings-3d', () => {
+                if (!drawMode && !isActivelyDrawing) {
+                    map.getCanvas().style.cursor = '';
+                }
+            });
+        });
+
+        // No positioning logic needed - geocoder is in the container with flexbox
+
+        // Mobile collapse functionality
+        const toggleBtn = document.getElementById('toggle-panel');
+        const categorySection = document.getElementById('category-section');
+        const toggleIcon = document.getElementById('toggle-icon');
+
+        // Set initial icon state based on mobile/desktop
+        if (toggleIcon && window.innerWidth <= 640) {
+            toggleIcon.textContent = categorySection.classList.contains('hidden') ? '▼' : '▲';
+        }
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                categorySection.classList.toggle('hidden');
+                toggleIcon.textContent = categorySection.classList.contains('hidden') ? '▼' : '▲';
+            });
+        }
+    </script>
+</body>
+</html>
